@@ -18,4 +18,5 @@ To run it, you just need to static serve the files in this directory.
 python3 -m http.server
 ```
 
-In a production setting, I recommend to serve this with Nginx or something.
+In a production setting, I recommend to serve this with Nginx or something.  
+This repository is deployed using GitHub Pages [here](https://alexprengere.github.io/python_playground/). Try it out!
