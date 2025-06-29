@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Python playground</title>
+    <style>
+      :root {
+        --bg: #1e1e1e;
+        --fg: #e8e8e8;
+        --panel: #2c2c2c;
+        --accent: #4caf50;
+        --border: #444;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      body {
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        font-family: system-ui, Segoe UI, sans-serif;
+        background: var(--bg);
+        color: var(--fg);
+      }
+      button,
+      input[type=file],
+      input[type=file]::-webkit-file-upload-button,  /* Chrome / Edge / Safari */
+      input[type=file]::file-selector-button{        /* Firefox */
+        font-family: inherit;
+      }
+      h1 {
+        padding: 25px 20px;
+        font-size: clamp(1.4rem, 3vw, 2rem);
+        text-align: center;
+      }
+      #main {
+        flex: 1;
+        display: flex;
+        min-height: 0;
+      }
+      #editor {
+        /* Ace column */
+        flex: 0 0 60%; /* 60 % of the horizontal space  */
+        min-width: 0; /* allow it to shrink if viewport is narrow */
+        border-right: 1px solid var(--border);
+        background: #272822; /* same dark tone as Monokai → no white flash */
+        --ace-bg: #272822; /* custom var for reuse */
+      }
+      #editor .ace_gutter{
+          background: var(--ace-bg);
+          color: #8f908a;
+      }
+      #side {
+        /* controls + output column */
+        flex: 1; /* fills the remaining 40 % */
+        max-width: 40%; /* optional: cap it at exactly 40 % */
+        display: flex;
+        flex-direction: column;
+      }
+      #controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+        padding: 10px;
+        background: var(--panel);
+        border-bottom: 1px solid var(--border);
+        transition: outline 0.1s ease-in-out;
+      }
+      /* dashed highlight when a file is dragged over the bar */
+      #controls.drag-over {
+        outline: 2px dashed var(--accent);
+        outline-offset: -6px;
+      }
+      #run,
+      #picker::-webkit-file-upload-button,          /* Chrome / Edge / Safari */
+      #picker::file-selector-button {               /* Firefox */
+        padding: 6px 16px;
+        border: 0;
+        border-radius: 6px;
+        font-size: 1rem;
+        background: var(--accent);
+        color: #fff;
+        cursor: pointer;
+      }
+      #run:disabled {
+        background: #777;
+        cursor: not-allowed;
+      }
+      #run:hover,
+      #picker::-webkit-file-upload-button:hover,
+      #picker::file-selector-button:hover{
+        filter: brightness(1.05);
+      }
+      #run:active,
+      #picker::-webkit-file-upload-button:active,
+      #picker::file-selector-button:active{
+        filter: brightness(0.9);
+      }
+      #status{
+        margin-left: auto;
+        text-align: right;
+      }
+      #output {
+        flex: 1;
+        overflow: auto;
+        background: #000;
+        color: #eaeaea;
+        font: 14px/1.4 monospace;
+        padding: 12px;
+        border-top: 1px solid var(--border);
+        white-space: pre-wrap;
+      }
+      input[type="file"] {
+        color: var(--fg);
+        font-size: 0.9rem;
+        padding: 8px 0px;
+        border-radius: 10px;
+        font-size: 1rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>
+        🐍 Python playground 🐍
+    </h1>
+    <div id="main">
+      <div id="editor">#
+# Write your Python code here! It should be Python3.12+
+# *Everything* is happening in the browser (this is statically served).
+# ---------------------------------------------------------------------------
+# There is already a 'test.txt' file loaded, but you can upload more files by
+# using the file picker (or drag & drop) on the right panel.
+# ---------------------------------------------------------------------------
+# You can even install additional packages using micropip!
+#
+# import micropip
+# await micropip.install('orjson')
+#
+with open('test.txt') as f:
+    data = f.read()
+
+print(data)</div>
+      <div id="side">
+        <div id="controls">
+          <button id="run" disabled>Run (Shift-Enter)</button>
+          <input id="picker" type="file" />
+          <span id="status">Loading …</span>
+        </div>
+        <pre id="output"></pre>
+      </div>
+    </div>
+
+    <!-- Ace editor -->
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.43.0/ace.js"
+      crossorigin="anonymous"
+    ></script>
+    <!-- Pyodide -->
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.27.7/full/pyodide.js"></script>
+
+    <script type="module">
+      const SKEY = "playground.code";
+      const runBtn = document.getElementById("run");
+      const statusEl = document.getElementById("status");
+      const output = document.getElementById("output");
+      const picker = document.getElementById("picker");
+      const dropZone = document.getElementById("controls");
+
+      // ----- Ace setup -----
+      const editor = ace.edit("editor", {
+        mode: "ace/mode/python",
+        theme: "ace/theme/monokai",
+        fontSize: "14px",
+      });
+      editor.session.setTabSize(4);
+      editor.session.setUseSoftTabs(true);
+      // persist editor text is localStorage:
+      editor.setValue(localStorage.getItem(SKEY) ?? editor.getValue(), -1);   // restore
+      editor.session.on("change", () => localStorage.setItem(SKEY, editor.getValue()));
+
+      editor.focus();
+      editor.navigateFileEnd();
+
+      // ----- Pyodide + extra package -----
+      let pyodide;
+
+      (async () => {
+        try {
+          statusEl.textContent = "Downloading Python …";
+          pyodide = await loadPyodide({
+            stdout: (s) => (output.textContent += s + "\n"),
+          });
+
+          /* preload server-side files ------------- */
+          statusEl.textContent = "Fetching files …";
+          const preload = [
+            { url: "data/test.txt", vpath: "test.txt" },
+          ];
+
+          for (const { url, vpath } of preload) {
+            const buf = await (await fetch(url)).arrayBuffer();
+            const bytes = new Uint8Array(buf);
+            /* ensure directory exists: */
+            const dir = vpath.split("/").slice(0, -1).join("/");
+            if (dir && !pyodide.FS.analyzePath(dir).exists)
+              pyodide.FS.mkdirTree(dir);
+            pyodide.FS.writeFile(vpath, bytes);
+          }
+
+          // load micropip itself
+          statusEl.textContent = "Fetching micropip …";
+          await pyodide.loadPackage("micropip");
+
+          // use micropip to install your wheels if you have some in the wheels directory
+          statusEl.textContent = "Installing wheels …";
+          await pyodide.runPythonAsync(`
+import micropip
+await micropip.install([
+    "tzdata",
+    # you may add wheels in the wheels directory here:
+    # pkg @ "wheels/pkg.whl",
+])
+`);
+          statusEl.textContent = "😊";
+          output.textContent = "All good! You can now run your code.\n";
+          runBtn.disabled = false;
+        } catch (err) {
+          statusEl.textContent = "Init failed 😕";
+          console.error(err);
+        }
+      })();
+
+      // ----- Utilities -----
+      async function handleFile(file) {
+        if (!file || !pyodide) return;
+        try {
+          const bytes = new Uint8Array(await file.arrayBuffer());
+          pyodide.FS.writeFile(file.name, bytes);
+          statusEl.textContent = `✔ Loaded "${file.name}" (${bytes.length.toLocaleString()} bytes)\n`;
+        } catch (err) {
+          statusEl.textContent = "File load error: " + err + "\n";
+          console.error(err);
+        }
+      }
+
+      // ----- Run helper -----
+      async function runCode() {
+        if (!pyodide) return;
+        const code = editor.getValue();
+        output.textContent = "";
+        statusEl.textContent = "⏳"
+        runBtn.disabled = true;
+        try {
+          const result = await pyodide.runPythonAsync(code);
+          if (result !== undefined) output.textContent += String(result) + "\n";
+          statusEl.textContent = "😊";
+        } catch (err) {
+          output.textContent += err + "\n";
+          statusEl.textContent = "😞";
+          console.error(err);
+        } finally {
+          runBtn.disabled = false;
+        }
+      }
+      runBtn.addEventListener("click", runCode);
+      editor.commands.addCommand({
+        name: "run",
+        bindKey: { win: "Shift-Enter", mac: "Shift-Enter" },
+        exec: runCode,
+      });
+
+      // ----- File picker -----
+      picker.addEventListener("change", (e) => handleFile(e.target.files?.[0]));
+
+      // ----- Drag & Drop support -----
+      ["dragenter", "dragover"].forEach((type) => {
+        dropZone.addEventListener(type, (e) => {
+          e.preventDefault();
+          dropZone.classList.add("drag-over");
+        });
+      });
+
+      ["dragleave", "drop"].forEach((type) => {
+        dropZone.addEventListener(type, (e) => {
+          e.preventDefault();
+          if (type === "drop") {
+            const file = e.dataTransfer?.files?.[0];
+            handleFile(file);
+          }
+          dropZone.classList.remove("drag-over");
+        });
+      });
+    </script>
+  </body>
+</html>
+
