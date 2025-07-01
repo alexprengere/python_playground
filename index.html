@@ -42,20 +42,26 @@
       }
       #editor {
         /* Ace column */
-        flex: 0 0 60%; /* 60 % of the horizontal space  */
+        flex: 0 0 40%; /* 40 % of the horizontal space  */
         min-width: 0; /* allow it to shrink if viewport is narrow */
         border-right: 1px solid var(--border);
         background: #272822; /* same dark tone as Monokai → no white flash */
         --ace-bg: #272822; /* custom var for reuse */
       }
       #editor .ace_gutter{
-          background: var(--ace-bg);
-          color: #8f908a;
+        background: var(--ace-bg);
+        color: #8f908a;
       }
-      #side {
-        /* controls + output column */
-        flex: 1; /* fills the remaining 40 % */
-        max-width: 40%; /* optional: cap it at exactly 40 % */
+      #divider{
+        width:4px;                     /* thin bar */
+        cursor:col-resize;             /* resize cursor */
+        background:var(--border);
+      }
+      #divider:hover{                  /* subtle feedback */
+        background:var(--accent);
+      }
+      #side {                         /* controls + output column */
+        flex: 1; /* fills the remaining size */
         display: flex;
         flex-direction: column;
       }
@@ -142,7 +148,9 @@
 with open('test.txt') as f:
     data = f.read()
 
+print('Hello!')
 print(data)</div>
+      <div id="divider"></div>
       <div id="side">
         <div id="controls">
           <button id="run" disabled>Run (Shift-Enter)</button>
@@ -192,6 +200,7 @@ print(data)</div>
           statusEl.textContent = "Downloading Python …";
           pyodide = await loadPyodide({
             stdout: (s) => (output.textContent += s + "\n"),
+            stderr: (s) => (output.textContent += s + "\n"),
           });
 
           /* preload server-side files ------------- */
@@ -219,7 +228,7 @@ print(data)</div>
           await pyodide.runPythonAsync(`
 import micropip
 await micropip.install([
-    "tzdata",
+    "tzdata>=2025.2",
     # you may add wheels in the wheels directory here:
     # pkg @ "wheels/pkg.whl",
 ])
@@ -239,9 +248,9 @@ await micropip.install([
         try {
           const bytes = new Uint8Array(await file.arrayBuffer());
           pyodide.FS.writeFile(file.name, bytes);
-          statusEl.textContent = `✔ Loaded "${file.name}" (${bytes.length.toLocaleString()} bytes)\n`;
+          statusEl.textContent = `✔ Loaded "${file.name}" (${bytes.length.toLocaleString()} bytes)`;
         } catch (err) {
-          statusEl.textContent = "File load error: " + err + "\n";
+          statusEl.textContent = "File load error: " + err;
           console.error(err);
         }
       }
@@ -293,6 +302,33 @@ await micropip.install([
           dropZone.classList.remove("drag-over");
         });
       });
+
+      // ─── column resizer ──────────────────────────────────────────
+      const divider  = document.getElementById("divider");
+      const editorEl = document.getElementById("editor");
+
+      let startX, startW;
+
+      divider.addEventListener("mousedown", e => {
+        startX = e.clientX;
+        startW = editorEl.getBoundingClientRect().width;
+
+        // global handlers while dragging
+        document.body.style.cursor = "col-resize";
+        document.addEventListener("mousemove", onDrag);
+        document.addEventListener("mouseup", stopDrag);
+      });
+
+      function onDrag(e){
+        const newW = Math.max(200, startW + e.clientX - startX); // 200 px min
+        editorEl.style.flex = `0 0 ${newW}px`;                   // flex-basis tweak
+      }
+
+      function stopDrag(){
+        document.body.style.cursor = "";
+        document.removeEventListener("mousemove", onDrag);
+        document.removeEventListener("mouseup", stopDrag);
+      }
     </script>
   </body>
 </html>
