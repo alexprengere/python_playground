@@ -81,6 +81,7 @@
         outline-offset: -6px;
       }
       #run,
+      #share,
       #picker::-webkit-file-upload-button,          /* Chrome / Edge / Safari */
       #picker::file-selector-button {               /* Firefox */
         padding: 6px 16px;
@@ -91,16 +92,19 @@
         color: #fff;
         cursor: pointer;
       }
-      #run:disabled {
+      #run:disabled,
+      #share:disabled {
         background: #777;
         cursor: not-allowed;
       }
       #run:hover,
+      #share:hover,
       #picker::-webkit-file-upload-button:hover,
       #picker::file-selector-button:hover{
         filter: brightness(1.05);
       }
       #run:active,
+      #share:active,
       #picker::-webkit-file-upload-button:active,
       #picker::file-selector-button:active{
         filter: brightness(0.9);
@@ -154,6 +158,7 @@ print(data)</div>
       <div id="side">
         <div id="controls">
           <button id="run" disabled>Run (Shift-Enter)</button>
+          <button id="share" disabled>Share</button>
           <input id="picker" type="file" />
           <span id="status">Loading …</span>
         </div>
@@ -172,10 +177,15 @@ print(data)</div>
     <script type="module">
       const SKEY = "playground.code";
       const runBtn = document.getElementById("run");
+      const shareBtn = document.getElementById("share");
       const statusEl = document.getElementById("status");
       const output = document.getElementById("output");
       const picker = document.getElementById("picker");
       const dropZone = document.getElementById("controls");
+
+      /* ── tiny helper to (de)serialize code in URL ───────────── */
+      const encodeCode = (s) => btoa(unescape(encodeURIComponent(s)));
+      const decodeCode = (b) => decodeURIComponent(escape(atob(b)));
 
       // ----- Ace setup -----
       const editor = ace.edit("editor", {
@@ -185,8 +195,31 @@ print(data)</div>
       });
       editor.session.setTabSize(4);
       editor.session.setUseSoftTabs(true);
-      // persist editor text is localStorage:
-      editor.setValue(localStorage.getItem(SKEY) ?? editor.getValue(), -1);   // restore
+
+      // persistance
+      const saved = localStorage.getItem(SKEY);
+      const urlCode = new URLSearchParams(location.search).get("code");
+      if (urlCode) {  // URL wins if present
+        try {
+          editor.setValue(decodeCode(urlCode), -1);
+
+          /* ── remove ?code=… from the URL so a reload won’t overwrite the session ── */
+          const params = new URLSearchParams(location.search);
+          params.delete("code");                       // keep ?id=… or others intact
+          const clean = params.toString();
+          history.replaceState(
+            null,
+            "",                                       // title unchanged
+            `${location.pathname}${clean ? "?" + clean : ""}${location.hash}`
+          );
+
+        } catch(e) {
+          console.warn("Bad code param:", e);
+          if (saved) editor.setValue(saved, -1);   // graceful fallback
+        }
+      } else if (saved) {
+        editor.setValue(saved, -1);  // otherwise restore previous session
+      }
       editor.session.on("change", () => localStorage.setItem(SKEY, editor.getValue()));
 
       editor.focus();
@@ -234,8 +267,9 @@ await micropip.install([
 ])
 `);
           statusEl.textContent = "😊";
-          output.textContent = "All good! You can now run your code.\n";
+          output.textContent = "✅ You can now run your code.\n";
           runBtn.disabled = false;
+          shareBtn.disabled = false;
         } catch (err) {
           statusEl.textContent = "Init failed 😕";
           console.error(err);
@@ -279,6 +313,24 @@ await micropip.install([
         name: "run",
         bindKey: { win: "Shift-Enter", mac: "Shift-Enter" },
         exec: runCode,
+      });
+
+      /* ── share deep-link ───────────────────────────────────── */
+      shareBtn.addEventListener("click", () => {
+        const packed = encodeCode(editor.getValue());
+        /* preserve existing params (notably ?id=…) and inject/replace ?code= */
+        const params = new URLSearchParams(location.search);
+        params.set("code", packed);
+        const link = `${location.origin}${location.pathname}?${params.toString()}`;
+        const fallback = () => prompt("Copy the link:", link);
+        if (navigator.clipboard?.writeText) {      /* secure-context only */
+            navigator.clipboard.writeText(link)
+              .then(() => { statusEl.textContent = "📋 Link copied!"; })
+              .catch(fallback);
+        } else {
+            statusEl.textContent = "📋 (could not copy to clipboard directly)";
+            fallback();
+        }
       });
 
       // ----- File picker -----
